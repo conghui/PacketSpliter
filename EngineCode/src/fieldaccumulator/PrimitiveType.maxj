@@ -1,0 +1,11 @@
+package fieldaccumulator;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEType;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFETypeFactory;
+
+public class PrimitiveType {
+  public static final DFEType uint64_t = DFETypeFactory.dfeUInt(64);
+  public static final DFEType uint32_t = DFETypeFactory.dfeUInt(32);
+  public static final DFEType uint16_t = DFETypeFactory.dfeUInt(16);
+  public static final DFEType uint8_t = DFETypeFactory.dfeUInt(8);
+}

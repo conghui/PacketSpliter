@@ -117,11 +117,12 @@ int main(int argc, char *argv[]) {
 
   struct in_addr dfe_ip;
   inet_aton(argv[1], &dfe_ip);
-  struct in_addr cpu_ip;
-  inet_aton(argv[2], &cpu_ip);
+  struct in_addr remote_ip;
+  inet_aton(argv[2], &remote_ip);
   struct in_addr netmask;
   inet_aton("255.255.255.0", &netmask);
-  const int port = 5007;
+  const int inport = 45678;
+  const int outport = 12345;
 
   max_file_t *maxfile = FieldAccumulatorUDPChap03_init();
   max_engine_t * engine = max_load(maxfile, "*");
@@ -130,15 +131,6 @@ int main(int argc, char *argv[]) {
   max_config_set_bool(MAX_CONFIG_PRINTF_TO_STDOUT, true);
 
   max_actions_t *actions = max_actions_init(maxfile, NULL);
-  char regName[32];
-  for (int i=0; i < 1024; i++) {
-    sprintf(regName, "filter_%d", i);
-    if (i == 150) {
-      max_set_uint64t(actions, "filteringKernel", regName, 0xCC /* a value to match... */);
-    } else {
-      max_set_uint64t(actions, "filteringKernel", regName, 0x4D1B /* or any value you want */);
-    }
-  }
   max_run(engine, actions);
   max_actions_free(actions);
 
@@ -157,15 +149,15 @@ int main(int argc, char *argv[]) {
   // DFE Socket
   max_ip_config(engine, MAX_NET_CONNECTION_QSFP_TOP_10G_PORT1, &dfe_ip, &netmask);
   max_udp_socket_t *dfe_socket = max_udp_create_socket(engine, "udpTopPort1");
-  max_udp_bind(dfe_socket, port);
-  max_udp_connect(dfe_socket, &cpu_ip, port);
+  max_udp_bind(dfe_socket, inport);
+  max_udp_connect(dfe_socket, &remote_ip, outport);
 
 
   // Linux Socket
-  int cpu_socket = create_cpu_udp_socket(&cpu_ip, &dfe_ip, port);
+//  int cpu_socket = create_cpu_udp_socket(&cpu_ip, &dfe_ip, port);
 
-  printf("Sending test frame...\n");
-  sendTestFrame(cpu_socket);
+//  printf("Sending test frame...\n");
+//  sendTestFrame(cpu_socket);
 
   printf("Waiting for kernel response...\n"); fflush(stdout);
 
