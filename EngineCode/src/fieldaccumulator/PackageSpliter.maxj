@@ -341,7 +341,7 @@ class PackageSpliter extends ManagerStateMachine {
   // - TRACING ONE PACKAGE
   // - GAP BETWEEN FIELD
   enum Mode {
-    HEADER_FIRST_CYCLE, TRACKING_HEADER, FIELD_FIRST_CYCLE, TRACKING_FIELDS, GAP_BETWEEN_FIELD
+    HEADER_FIRST_CYCLE, TRACKING_HEADER, FIELD_DATA_FIRST_CYCLE, TRACKING_FIELDS, GAP_BETWEEN_FIELD
   }
 
   /// declare the output data type
@@ -391,11 +391,11 @@ class PackageSpliter extends ManagerStateMachine {
   private final DFEsmStateValue outputRegValid;
   private final DFEsmStateValue outputStalling;
   private final DFEsmStateValue nextMsgStartWord;
-  private final DFEsmStateValue nextAlignment;
+  private final DFEsmStateValue nextFidAlignment;
   private final DFEsmStateValue currentMsgEndWord;
   private final DFEsmStateValue frameEndedLastCycle;
   private final DFEsmStateValue newMessageStarting;
-  private final DFEsmStateValue currentAlignment;
+  private final DFEsmStateValue currenFieldDataAlignment;
   private final DFEsmStateValue cycleCounter;
 
   protected PackageSpliter(DFEManager owner) {
@@ -430,10 +430,10 @@ class PackageSpliter extends ManagerStateMachine {
     lastInputData = state.value(dfeUInt(inputType.getTypeForField(udpType.getData()).getTotalBits()));
     wordPos = state.value(dfeUInt(16));
     nextMsgStartWord = state.value(dfeUInt(16));
-    nextAlignment = state.value(dfeUInt(3));
+    nextFidAlignment = state.value(dfeUInt(3));
     currentMsgEndWord = state.value(dfeUInt(16));
     newMessageStarting = state.value(dfeBool());
-    currentAlignment = state.value(dfeUInt(3));
+    currenFieldDataAlignment = state.value(dfeUInt(3));
     outputReg = state.value(dfeUInt(outputType.getTotalBits()));
     outputRegValid = state.value(dfeBool(), false);
     outputStalling = state.value(dfeBool(), true);
@@ -528,15 +528,14 @@ class PackageSpliter extends ManagerStateMachine {
             /**
              * Calculate where the current message ends and the next message begins
              */
-            DFEsmValue fieldLen = SMUtils.extractBytes(inputData, 7, 6);
-            fieldLen = byteReverse(fieldLen);
+            DFEsmValue fieldLen = byteReverse(SMUtils.extractBytes(inputData, 7, 6));
             printf("fieldLen: hex=0x%04x, dec=%u\n", fieldLen, fieldLen);
 
             nextMsgByteOffset = (headerBytes + fieldOverhead) + fieldLen;
             printf("nextMsgByteOffset: %d\n", nextMsgByteOffset);
 
             nextMsgAlignment_s = byteOffsetToAlignment(nextMsgByteOffset);
-            nextAlignment.next <== nextMsgAlignment_s;
+            nextFidAlignment.next <== nextMsgAlignment_s;
             printf("nextMsgAlignment_s: %d\n", nextMsgAlignment_s);
 
             DFEsmValue msgEndWord = byteOffsetToWordOffset(nextMsgByteOffset);
@@ -549,23 +548,13 @@ class PackageSpliter extends ManagerStateMachine {
               currentMsgEndWord.next <== msgEndWord;
             }
 
-//            /**
-//             * construct the first message, only change the fields that are not default
-//             */
-//            SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ALIGNMENT, firstMessageAlignment);
-//            SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ISPADDING, true);
-//            SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.SOM, true);
-//
-//            // output this frame
-//            outputRegValid.next <== true;
-//            sMode.next <== Mode.TRACKING_FIELDS;
-            sMode.next <== Mode.FIELD_FIRST_CYCLE;
+            sMode.next <== Mode.FIELD_DATA_FIRST_CYCLE;
             printStateTransition();
           }
         }
       }
 
-      CASE (Mode.FIELD_FIRST_CYCLE) {
+      CASE (Mode.FIELD_DATA_FIRST_CYCLE) {
         IF (inputValid) {
           /**
            * it assumes that the minimal length of field is greater than 8
@@ -576,8 +565,8 @@ class PackageSpliter extends ManagerStateMachine {
           lastInputData.next <== inputData;
           sMode.next <== Mode.TRACKING_FIELDS;
 
-          int firstMessageAlignment = byteOffsetToAlignment(headerBytes + fieldOverhead);
-          SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ALIGNMENT, firstMessageAlignment);
+          int firstFieldDataAlignment = byteOffsetToAlignment(headerBytes + fieldOverhead);
+          SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ALIGNMENT, firstFieldDataAlignment);
           SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ISPADDING, true);
           SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.SOM, true);
 
@@ -596,7 +585,8 @@ class PackageSpliter extends ManagerStateMachine {
 
           IF (newMessageStarting) {
             SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.SOM, true);
-            SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ALIGNMENT, currentAlignment);
+            SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ALIGNMENT, currenFieldDataAlignment);
+            SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ISPADDING, true);
           }
 
           IF (wordPos === currentMsgEndWord) {
@@ -613,7 +603,7 @@ class PackageSpliter extends ManagerStateMachine {
              *  alignment 2:        end   fid         field len   data
              *  alignment 3:              end   fid         field len   data
              */
-            IF (nextAlignment === 1 | nextAlignment === 2 | nextAlignment === 3) {
+            IF (nextFidAlignment === 1 | nextFidAlignment === 2 | nextFidAlignment === 3) {
               /**
                *  We need to hold this frame, don't increase wordPos and don't update lastInputData
                */
@@ -648,37 +638,30 @@ class PackageSpliter extends ManagerStateMachine {
        * Optimization: do some filtering in the Track state and avoid inserting Gaps when the data is not interesting
        */
       CASE (Mode.GAP_BETWEEN_FIELD) {
-        outputRegValid.next <== true;
-        SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.ISPADDING, true);
-        SMUtils.assignField(outputReg.next, outputType, SingleFieldOutputType.EOM, true);
+        printf("nextFidAlignment: %u\n", nextFidAlignment);
+        DFEsmValue fieldLen = extractFieldLengthBetweenFields(inputData, nextFidAlignment);
+        printf("fieldLen: hex=0x%04x, dec=%u\n", fieldLen, fieldLen);
 
-        DFEsmValue fieldLen = extractFieldLengthBetweenFields(inputData, nextAlignment);
-
-        nextMsgByteOffset = calculateNextMsgByteOffset(nextAlignment, fieldOverhead, fieldLen);
-
+        nextMsgByteOffset = calculateNextMsgByteOffset(nextFidAlignment, fieldOverhead, fieldLen);
         nextMsgAlignment_s = byteOffsetToAlignment(nextMsgByteOffset);
-
         DFEsmValue msgEndWord = byteOffsetToWordOffset(nextMsgByteOffset);
         nextMsgStartWord_s = wordPos + msgEndWord;
 
-//        printf("wordPos = %d, nextAlignment = %d, efCount_s = %d --> nextMsgByteOffset = %d, nextMsgStartWord_s = %d\n",
-//            wordPos, nextAlignment, efCount_s, nextMsgByteOffset, nextMsgStartWord_s);
+        currenFieldDataAlignment.next <== byteOffsetToAlignment(calculateNextFieldDataByteOffset(nextFidAlignment, fieldOverhead));
 
         nextMsgStartWord.next <== nextMsgStartWord_s;
-        nextAlignment.next <== nextMsgAlignment_s;
-        currentAlignment.next <== nextAlignment; // This is the alignment for the message that is about to start
-
+        nextFidAlignment.next <== nextMsgAlignment_s;
         currentMsgEndWord.next <== nextMsgStartWord_s;
+
         IF (nextMsgAlignment_s === 0)
           currentMsgEndWord.next <== nextMsgStartWord_s - 1;
 
-        printf("nextMsgStartWord = %d, nextAlignment = %d\n", nextMsgStartWord, nextAlignment);
+        printf("nextMsgStartWord = %d, nextAlignment = %d\n", nextMsgStartWord, nextFidAlignment);
 
         newMessageStarting.next <== true;
 
         IF (frameEndedLastCycle) {
           sMode.next <== Mode.HEADER_FIRST_CYCLE;
-          outputRegValid.next <== false;
         } ELSE {
           sMode.next <== Mode.TRACKING_FIELDS;
         }
@@ -730,7 +713,7 @@ class PackageSpliter extends ManagerStateMachine {
          * currentMsgEndWorld:                                                  # last cycle
          * NextMsgStartWorld:     fid       |field len|   data                  # this cycle
          */
-        fieldLen <== SMUtils.extractBytes(data, 3, 2);
+        fieldLen <== byteReverse(SMUtils.extractBytes(data, 3, 2));
       }
 
       CASE (1) {
@@ -738,7 +721,7 @@ class PackageSpliter extends ManagerStateMachine {
          * 0     1     2     3     4     5     6     7
          *       fid       |field len|   data
          */
-        fieldLen <== SMUtils.extractBytes(data, 4, 3);
+        fieldLen <== byteReverse(SMUtils.extractBytes(data, 4, 3));
       }
 
       CASE (2) {
@@ -746,7 +729,7 @@ class PackageSpliter extends ManagerStateMachine {
          * 0     1     2     3     4     5     6     7
          *             fid       |field len|   data
          */
-        fieldLen <== SMUtils.extractBytes(data, 5, 4);
+        fieldLen <== byteReverse(SMUtils.extractBytes(data, 5, 4));
       }
 
       CASE (3) {
@@ -754,7 +737,7 @@ class PackageSpliter extends ManagerStateMachine {
          * 0     1     2     3     4     5     6     7
          *                   fid       |field len|   data
          */
-        fieldLen <== SMUtils.extractBytes(data, 6, 5);
+        fieldLen <== byteReverse(SMUtils.extractBytes(data, 6, 5));
       }
 
       CASE (4) {
@@ -763,7 +746,7 @@ class PackageSpliter extends ManagerStateMachine {
          *                         fid       |field len|    # previous cycle
          * data                                             # this cycle
          */
-        fieldLen <== SMUtils.extractBytes(lastInputData, 7, 6);
+        fieldLen <== byteReverse(SMUtils.extractBytes(lastInputData, 7, 6));
       }
 
       CASE (5) {
@@ -783,7 +766,7 @@ class PackageSpliter extends ManagerStateMachine {
          *                                    fid       # previous cycle
          * |field len| data                             # this cycle
          */
-        fieldLen <== SMUtils.extractBytes(data, 1, 0);
+        fieldLen <== byteReverse(SMUtils.extractBytes(data, 1, 0));
       }
 
       CASE (7) {
@@ -792,7 +775,7 @@ class PackageSpliter extends ManagerStateMachine {
          *                                           fid       # previous cycle
          *      |field len| data                             # this cycle
          */
-        fieldLen <== SMUtils.extractBytes(data, 2, 1);
+        fieldLen <== byteReverse(SMUtils.extractBytes(data, 2, 1));
       }
 
     }
@@ -812,6 +795,20 @@ class PackageSpliter extends ManagerStateMachine {
     return nextMsgByteOffset;
   }
 
+  private DFEsmValue calculateNextFieldDataByteOffset(final DFEsmValue alignment, final int overhead) {
+    DFEsmAssignableValue nextMsgByteOffset = assignable.value(dfeUInt(16));
+
+    nextMsgByteOffset <== alignment.cast(dfeUInt(16)) + overhead;
+
+//    IF (alignment <= 3) {
+//      nextMsgByteOffset <== alignment.cast(dfeUInt(16)) + overhead;
+//    } ELSE {
+//      nextMsgByteOffset <== alignment.cast(dfeUInt(16)) + overhead - 8;
+//    }
+
+    return nextMsgByteOffset;
+  }
+
   public void printStateTransition() {
     if (DEBUG_ENABLED) {
       debug.simPrintf("%StateMachine%: [%d] %s -> %s\n", cycleCounter, sMode, sMode.next);
@@ -825,13 +822,6 @@ class PackageSpliter extends ManagerStateMachine {
     }
   }
 
-//  public DFEsmValue extractBigEndianBytes(DFEsmValue v, int idx, int bytes) {
-//    DFEsmAssignableValue ret = assignable.value(dfeUInt(bytes*8));
-//
-//    for (int i = 0; i < bytes; i++) {
-//      ret[(8*i + 1) - 1 : 8*i] = SMUtils.extractByte(v, byteIndex)
-//    }
-//  }
   public DFEsmValue byteReverse(DFEsmValue v) {
     DFEsmValue r = null;
 
