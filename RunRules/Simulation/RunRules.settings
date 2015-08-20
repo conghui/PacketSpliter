@@ -8,7 +8,7 @@
 <maxFiles>
 <maxFile buildName="FieldAccumulatorUDPChap03" buildOrUseExisting="build">
 <runConfiguration askBeforeAutoBuild="false">
-<mainClass>fieldaccumulator.TrackerManager</mainClass>
+<mainClass>conghui.TrackerManager</mainClass>
 <maxHeapSize>2</maxHeapSize>
 </runConfiguration>
 <selectEngineTarget enabled="false">VECTIS</selectEngineTarget>
@@ -48,7 +48,7 @@ USE_SLIC=1</customDefinitions>
 <netmaskTwo/>
 <pcapFileTwo/>
 <max4v1net enabled="true">
-<max4v1Qsfp key="TOP" name="TOP">
+<max4v1Qsfp key="QSFP0" name="TOP">
 <max4v1Port index="1" pcapFile="" tapIpAddress="169.254.10.1" tapNetmask="255.255.255.0" type="Type10G"/>
 </max4v1Qsfp>
 </max4v1net>

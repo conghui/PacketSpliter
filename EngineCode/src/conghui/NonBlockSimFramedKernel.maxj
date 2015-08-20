@@ -1,0 +1,64 @@
+package conghui;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.Accumulator.Params;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.Reductions;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.IO.DelimiterMode;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.IO.NonBlockingInput;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.IO.NonBlockingMode;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEStruct;
+import com.maxeler.networking.statemachines.Flushing;
+import com.maxeler.networking.v1.framed_kernels.ThroughputFramedKernel;
+import com.maxeler.networking.v1.kernel_types.SimpleFramedLinkType;
+import com.maxeler.networking.v1.kernel_types.UDPOneToOneRXType;
+
+public class NonBlockSimFramedKernel extends ThroughputFramedKernel {
+  public static final String INPUT_UDP = "inputUdp";
+  public static final String OUTPUT_FRAME = "outputFrame";
+  public static final SimpleFramedLinkType outputLinkType = new SimpleFramedLinkType();
+
+  private static final UDPOneToOneRXType udpRcvType = new UDPOneToOneRXType();
+
+  public NonBlockSimFramedKernel(KernelParameters parameters) {
+    super(parameters);
+    flush.disabled();
+
+
+    NonBlockingInput<DFEStruct> theInput = io.nonBlockingInput(INPUT_UDP,
+        udpRcvType.getDFEStructType(),
+        constant.var(true),
+        udpRcvType.getDFEStructType().getPositionForField(udpRcvType.getEOF()),
+        DelimiterMode.EOF_POSITION,
+        Flushing.interFrameGapNone,
+        NonBlockingMode.NO_TRICKLING);
+
+    DFEStruct inputStruct = theInput.data;
+    DFEVar valid = theInput.valid;
+
+    DFEVar data = inputStruct[udpRcvType.getData()];
+    DFEVar som  = inputStruct[udpRcvType.getSOF()];
+
+    /**
+     * setup the counter
+     */
+    Params validCounterParam = Reductions.accumulator.makeAccumulatorConfig(dfeUInt(32))
+                               .withEnable(valid).withClear(som);
+    DFEVar validCycleCounter = Reductions.accumulator.makeAccumulator(
+                                constant.var(dfeUInt(32), 1), validCounterParam);
+
+
+    debug.simPrintf(valid, "counter: %d, data: 0x%x\n", validCycleCounter, data);
+
+    DFEStruct output = outputLinkType.getDFEStructType().newInstance(this);
+    output["sof"] <== som;
+    output["data"] <== data;
+    output["eof"] <== inputStruct[udpRcvType.getEOF()];
+    output["mod"] <== inputStruct[udpRcvType.getMod()];
+
+    io.output(OUTPUT_FRAME, output.getType(), valid) <== output;
+
+    // TODO Auto-generated constructor stub
+  }
+
+}

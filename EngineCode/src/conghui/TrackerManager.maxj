@@ -1,4 +1,4 @@
-package fieldaccumulator;
+package conghui;
 
 
 import com.maxeler.maxcompiler.v2.managers.BuildConfig;
@@ -25,19 +25,27 @@ public class TrackerManager extends NetworkManager {
 		final ManagerClock netClk = getNetworkClock(Max4NetworkConnection.QSFP_TOP_10G_PORT1);
 		pushDefaultClock(netClk);
 
-//		final StateMachineBlock msgTracker = addStateMachine("msgTracker", new MessageTracker(this));
-//		msgTracker.getInput(MessageTracker.INPUT_FRAME) <== frameIn.getReceiveStream();
-//		final KernelBlock kernel = addKernel(new FilteringKernel(makeKernelParameters("filteringKernel")));
-//		kernel.getInput(FilteringKernel.INPUT_MESSAGES) <== msgTracker.getOutput(MessageTracker.OUTPUT_MSGS);
-//		addFramedStreamToCPU("toCPU", FilteringKernel.outputLinkType) <== kernel.getOutput(FilteringKernel.OUTPUT_MY_OUTPUT);
-
-		final StateMachineBlock msgTracker = addStateMachine("msgTracker", new PackageSpliter(this));
-		msgTracker.getInput(PackageSpliter.INPUT_FRAME) <== frameIn.getReceiveStream();
-		final KernelBlock kernel = addKernel(new XtpDisplayKernel(makeKernelParameters("filteringKernel")));
-		kernel.getInput(XtpDisplayKernel.INPUT_MESSAGES) <== msgTracker.getOutput(PackageSpliter.OUTPUT_FRAME);
-		addFramedStreamToCPU("toCPU", XtpDisplayKernel.outputLinkType) <== kernel.getOutput(XtpDisplayKernel.OUTPUT_MY_OUTPUT);
+		connect2(this, frameIn);
 	}
 
+	private static void connect2(NetworkManager manager, UDPStream frameIn) {
+	  NonBlockSimFramedKernel k = new NonBlockSimFramedKernel(manager.makeKernelParameters("NonBlockSimFramedKernel"));
+	  KernelBlock kernel = manager.addKernel(k);
+	  kernel.getInput(NonBlockSimFramedKernel.INPUT_UDP) <== frameIn.getReceiveStream();
+	  manager.addFramedStreamToCPU("toCPU", NonBlockSimFramedKernel.outputLinkType) <== kernel.getOutput(NonBlockSimFramedKernel.OUTPUT_FRAME);
+	}
+
+	private static void connect1(NetworkManager manager, UDPStream frameIn) {
+	  /**
+	   * UDP -> SM -> kernel
+	   */
+		final StateMachineBlock msgTracker = manager.addStateMachine("msgTracker", new PackageSpliterStateMachine(manager));
+		msgTracker.getInput(PackageSpliterStateMachine.INPUT_FRAME) <== frameIn.getReceiveStream();
+		final KernelBlock kernel = manager.addKernel(new XtpDisplayKernel(manager.makeKernelParameters("filteringKernel")));
+		kernel.getInput(XtpDisplayKernel.INPUT_MESSAGES) <== msgTracker.getOutput(PackageSpliterStateMachine.OUTPUT_FRAME);
+		manager.addFramedStreamToCPU("toCPU", XtpDisplayKernel.outputLinkType) <== kernel.getOutput(XtpDisplayKernel.OUTPUT_MY_OUTPUT);
+
+	}
 	public static void main(final String[] args) {
 		final TrackerEngineParameters params = new TrackerEngineParameters(args);
 		final TrackerManager manager = new TrackerManager(params);
